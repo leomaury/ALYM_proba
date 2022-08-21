@@ -1,0 +1,238 @@
+---
+title: "Predict House Sales Prices"
+output: html_document
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+
+```{r}
+library(randomForest)
+library(Metrics)
+library(Hmisc)
+library(psych)
+library(car)
+library(corrplot)
+```
+
+
+Import the data.
+```{r}
+train <- read.csv('Train.csv')
+dim(train)
+
+test <- read.csv('Test.csv')
+```
+
+
+```{r}
+set.seed(2010)
+```
+
+
+
+Report variables with missing values.
+```{r}
+sapply(train, function(x) sum(is.na(x)))
+```
+
+Summary statistics
+
+```{r}
+summary(train)
+```
+
+
+
+
+
+
+
+
+```{r}
+numericVars <- which(sapply(train, is.numeric))
+numericVarNames <- names(numericVars)
+
+train_numVar <- train[, numericVars]
+cor_numVar <- cor(train_numVar, use="pairwise.complete.obs")
+
+
+cor_sorted <- as.matrix(sort(cor_numVar[,'SalePrice'], decreasing = TRUE))
+
+CorHigh <- names(which(apply(cor_sorted, 1, function(x) abs(x)>0.5)))
+cor_numVar <- cor_numVar[CorHigh, CorHigh]
+
+corrplot.mixed(cor_numVar, tl.col="black", tl.pos = "lt")
+```
+garagecars & garagearea corro
+totalbsmtsf & X1stFlrSF corro
+yearBuilt & GarageYrBlt corro
+totRmsAbvGrd & GrlivArea corro
+
+
+
+
+
+
+
+### Fit the linear model
+
+```{r}
+fit <-  lm(SalePrice ~ OverallCond + LotArea + GrLivArea + TotRmsAbvGrd + GarageCars + FullBath + YearBuilt + YearRemodAdd + PoolArea + KitchenAbvGr + BedroomAbvGr , data=train)
+summary(fit)
+```
+interprete the output:
+
+R-squared of 0.7282 tells us that approximately 73% of variation in sale price can be explained by my model. 
+
+F-statistics and p-value show the overall significance test of my model.
+
+Residual standard error gives an idea on how far observed sale price are from the predicted or fitted sales price. 
+
+Intercept is the estimated sale price for a house with all the other variables at zero. It does not provide any meaningful interpretation. 
+
+The slope for "GrlivArea"(7.672e+01) is the effect of Above grade living area square feet on sale price adjusting or controling for the other variables, i.e we associate an increase of 1 square foot in "GrlivArea" with an increase of $76.72 in sale price adjusting or controlling for the other variables.
+
+
+
+
+
+
+
+
+However, as you have seen earlier, two variables - "GrLivArea" and "TotRmsAbvGrd" are highly correlated, the multicollinearity between "GrLivArea" and "TotRmsAbvGrd" means that we should not directly interpret "GrLivArea" as the effect of "GrLivArea" on sale price adjusting for "TotRmsAbvGrd" These two effects are somewhat bounded together.
+
+```{r}
+cor(train$GrLivArea, train$TotRmsAbvGrd, method='pearson')
+```
+```{r}
+train <- train[-c(819, 720),]
+fit <-  lm(log(SalePrice) ~ OverallQual + TotalBsmtSF + X1stFlrSF + X2ndFlrSF + Fireplaces + GarageCars + YearBuilt + GarageArea, data=train)
+summary(fit)
+```
+R-squared = 0.725
+ajusted r-squared = 0.7225 
+
+
+
+For correlation >= 0.70
+```{r}
+plot(y= train$SalePrice, x = train$OverallQual, xlab = "OverallQual", ylab = "SalePrice")
+
+plot(y= train$SalePrice, x = train$GrLivArea, xlab = "GrLivArea", ylab = "SalePrice")
+```
+
+
+
+### Create a confidence interval for the model coefficients
+
+```{r}
+confint(fit, conf.level=0.95)
+```
+
+For example, from the 2nd model, I have estimated the slope for "GrLivArea" is 87.64. I am 95% confident that the true slope is between 80.38 and 94.89.
+
+
+
+
+
+
+
+
+### Check the diagnostic plots for the model
+
+```{r}
+plot(fit)
+```
+
+The relationship between predictor variables and an outcome variable is approximate linear. There are three extreme cases (outliers).
+
+It looks like I don't have to be concerned too much, although two observations numbered as 317, 720 and 819 look a little off.
+
+The distribution of residuals around the linear model in relation to the sale price. The most of the houses in the data in the lower and median price range, the higher price, the less observations. 
+
+This plot helps us to find influential cases if any. Not all outliers are influential in linear regression analysis. It looks like none of the outliers in my model are influential. 
+
+
+
+
+
+
+### Testing the prediction model
+
+```{r}
+prediction_lm <- predict(fit, newdata = test)
+```
+
+
+Look at the first few values of prediction, and compare it to the values of salePrice in the test data set.
+```{r}
+print('Prediction lm')
+head(exp(prediction_lm))
+
+print('Test data')
+head(test$SalePrice)
+```
+
+
+
+
+At last, calculate the value of R-squared for the prediction model on the test data set. In general, R-squared is the metric for evaluating the goodness of fit of my model. Higher is better with 1 being the best. We also calculate the Root Mean Squared Error, the lower the better.
+```{r}
+print("value of R-squared for the prediction model on the test data set")
+SSE <- sum((test$SalePrice - exp(prediction_lm)) ^ 2)
+SST <- sum((test$SalePrice - mean(test$SalePrice)) ^ 2)
+1 - SSE/SST
+
+print("RMSE")
+rmse_val <- rmse(test$SalePrice, exp(prediction_lm))
+rmse_val
+```
+
+
+
+
+
+
+### Random Forest prediction
+```{r}
+forest <- randomForest(SalePrice ~ LotArea + PoolArea + GarageCars + TotRmsAbvGrd + KitchenAbvGr + GrLivArea + BedroomAbvGr + YearRemodAdd + YearBuilt + OverallCond, data=train)
+print(forest)
+```
+
+```{r}
+train <- train[-c(819, 720),]
+forest2 <- randomForest(SalePrice ~ GrLivArea + OverallQual + TotalBsmtSF + X1stFlrSF + X2ndFlrSF + Fireplaces + GarageCars + YearBuilt + GarageArea + BsmtFinType1, data=train)
+
+print(forest2)
+```
+
+
+
+```{r}
+linreg <- lm(log(SalePrice~.-SalePrice, data=forest2)
+
+prediction_rf <- predict(forest2, newdata = test)
+
+print('Prediction rf')
+head(prediction_rf)
+
+print('Test data')
+head(test$SalePrice)
+```
+
+
+At last, calculate the value of R-squared for the prediction model on the test data set. In general, R-squared is the metric for evaluating the goodness of fit of my model. Higher is better with 1 being the best. We also calculate the Root Mean Squared Error, the lower the better.
+```{r}
+print("value of R-squared for the prediction model on the test data set")
+SSE <- sum((test$SalePrice - prediction_rf) ^ 2)
+SST <- sum((test$SalePrice - mean(test$SalePrice)) ^ 2)
+1 - SSE/SST
+
+print("RMSE")
+rmse_val <- rmse(test$SalePrice, prediction_rf)
+rmse_val
+```
